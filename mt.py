@@ -2,66 +2,48 @@
 
 import os
 import hashlib
+import const
 
-class MarkleTree:
+class MerkleTree:
     def __init__(self, root):
         self._linelength = 30
         self._root = root
-        self._mt = {}
         self._hashlist = {}
-        self._tophash = ''
+        self._tree = {}
         self.__MT__()
-
-    def Line(self):
-        print self._linelength*'-'
-
-    def PrintHashList(self):
-        self.Line()
-        for item, itemhash in self._hashlist.iteritems():
-            print "%s %s" % (itemhash, item)
-        self.Line()
-        return
-
-    def PrintMT(self, hash):
-        value = self._mt[hash]
-        item = value[0]
-        child = value[1]
-        print "%s %s" % (hash, item)
-        if not child:
-            return
-        for itemhash, item in child.iteritems():  
-            print "    -> %s %s" % (itemhash, item)
-        for itemhash, item in child.iteritems():  
-            self.PrintMT(itemhash)
-
-    def MT(self):
-        for node, hash in self._hashlist.iteritems():
-            items = self.GetItems(node)
-            value = []
-            value.append(node)
-            list = {}
-            for item in items:
-                if node == self._root:
-                    list[self._hashlist[item]] = item
-                else: 
-                    list[self._hashlist[os.path.join(node, item)]] = os.path.join(node, item)
-            value.append(list)
-            self._mt[hash] = value
-        self._tophash = self._hashlist[self._root]
 
     def __MT__(self):
         self.HashList(self._root)
-        #self.PrintHashList()
-        self.MT()
         print "Merkle Tree for %s: " % self._root
-        self.PrintMT(self._tophash)
-        self.Line()
+
+    def ParseMT(self):
+        def tmp(x,y):
+            func    ={const.DIRC:MTDIRC,const.FILE:MTFILE}
+            x.update(func[y[:4]](y))
+            return x
+        def MTFILE(value):
+            value,name = value.split('#')
+            t= {name:value}
+            return t
+        def MTDIRC(value):
+            value,name = value.split('#')
+            items = self._tree[value].split(',')[:-1]
+            items = [{}]+items
+            return {name:reduce(tmp, items)}
+        top = self._hashlist['root']
+        if top:
+            tophash = self._tree[top]
+            items = tophash.split(',')[:-1]
+            self._mt = reduce(tmp, items,{})
+        else:
+            self._mt={}
+        return self._mt
 
     def md5sum(self, data):
-        m = hashlib.md5()
+        m = hashlib.sha1()
         fn = os.path.join(self._root, data)
         if os.path.isfile(fn):
-            try:   
+            try:
                 f = file(fn, 'rb')
             except:
                 return 'ERROR: unable to open %s' % fn
@@ -76,27 +58,25 @@ class MarkleTree:
         return m.hexdigest()
 
     def GetItems(self, directory):
-        value = []
-        if directory != self._root:
-            directory = os.path.join(self._root, directory)
-        if os.path.isdir(directory):
-            items = os.listdir(directory)
-            for item in items:
-                value.append(item)
-                #value.append(os.path.join(".", item))
-            value.sort()
-        return value
+        return [item for item in os.listdir(os.path.join(self._root, directory))] if os.path.isdir(os.path.join(self._root, directory)) else  []
     
     def HashList(self, rootdir):
-        self.HashListChild(rootdir)
-        items = self.GetItems(rootdir)
+        items = [item for item in os.listdir(rootdir)] if os.path.isdir(rootdir) else  []
         if not items:
             self._hashlist[rootdir] = ''
             return
-        s = ''
-        for subitem in items:
-            s = s + self._hashlist[subitem]
-        self._hashlist[rootdir] = self.md5sum(s)
+        for item in items:
+            if os.path.isdir(os.path.join(self._root, item)):
+                self.HashListChild(item)
+                s = reduce((lambda x,y: x+self._hashlist[os.path.join(item,y)]+'#'+y+','), self.GetItems(item),'')
+                self._hashlist[item] = const.DIRC+self.md5sum(s)
+                self._tree[self._hashlist[item]]    = s
+            else:
+                self._hashlist[item] = const.FILE+self.md5sum(item)
+                open("./cache/"+self._hashlist[item], "wb").write(open(os.path.join(self._root, item), "rb").read())
+        s = reduce((lambda x,y: x+self._hashlist[y]+'#'+y+','), items,'')
+        self._hashlist['root'] = const.ROOT+self.md5sum(s)
+        self._tree[self._hashlist['root']]    = s
 
     def HashListChild(self, rootdir):
         items = self.GetItems(rootdir)
@@ -105,45 +85,35 @@ class MarkleTree:
             return
         for item in items:
             itemname = os.path.join(rootdir, item)
-            if os.path.isdir(itemname):
-                self.HashListChild(item)
-                subitems = self.GetItems(item)
-                s = ''
-                for subitem in subitems:
-                    s = s + self._hashlist[os.path.join(item, subitem)]
-                if rootdir == self._root:
-                    self._hashlist[item] = self.md5sum(s)
-                else:
-                    self._hashlist[itemname] = self.md5sum(s)
+            if os.path.isdir(os.path.join(self._root, itemname)):
+                self.HashListChild(itemname)
+                s = reduce((lambda x,y: x+self._hashlist[os.path.join(itemname,y)]+'#'+y+','), self.GetItems(itemname),'')
+                self._hashlist[itemname] = const.DIRC+self.md5sum(s)
+                self._tree[self._hashlist[itemname]]    = s
             else:
-                if rootdir == self._root:
-                    self._hashlist[item] = self.md5sum(item)
-                else:
-                    self._hashlist[itemname] = self.md5sum(itemname)
- 
-def MTDiff(mt_a, a_tophash, mt_b, b_tophash):
-    if a_tophash == b_tophash:
-        print "Top hash is equal for %s and %s" % (mt_a._root, mt_b._root)
-    else:
-        a_value = mt_a._mt[a_tophash] 
-        a_child = a_value[1]    # retrive the child list for merkle tree a
-        b_value = mt_b._mt[b_tophash] 
-        b_child = b_value[1]    # retrive the child list for merkle tree b
+                self._hashlist[itemname] = const.FILE+self.md5sum(itemname)
+                open("./cache/"+self._hashlist[itemname], "wb").write(open(os.path.join(self._root, itemname), "rb").read())
 
-        for itemhash, item in a_child.iteritems():
+def MTDiff(mt_a, mt_b):
+    if mt_a._hashlist['root'] == mt_b._hashlist['root']:
+        print "Top hash is equal for %s and %s" % (mt_a._hashlist['root'], mt_b._hashlist['root'])
+    else:
+        a_child = mt_a._mt    # retrive the child list for merkle tree a
+        b_child = mt_b._mt    # retrive the child list for merkle tree b
+
+        for item in mt_a._mt.keys():
             try:
-                if b_child[itemhash] == item:
+                if mt_b[item] == mt_a[item]:
                     print "Info: SAME : %s" % item
             except:
                 print "Info: DIFFERENT : %s" % item
-                temp_value = mt_a._mt[itemhash]
+                temp_value = mt_a._mt[item]
                 if len(temp_value[1]) > 0:      # check if this is a directory
                     diffhash = list(set(b_child.keys()) - set(a_child.keys()))
                     MTDiff(mt_a, itemhash, mt_b, diffhash[0])
-                
-if __name__ == "__main__":
-    mt_a = MarkleTree('testA')
-    print mt_a._mt
-    mt_b = MarkleTree('testB')
-    MTDiff(mt_a, mt_a._tophash, mt_b, mt_b._tophash)
 
+if __name__ == "__main__":
+    mt_a = MerkleTree('testA')
+    print mt_a.ParseMT()
+    print mt_a._tree
+    print mt_a._hashlist
